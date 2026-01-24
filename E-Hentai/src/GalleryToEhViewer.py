@@ -3,14 +3,19 @@
 import os
 import re
 import sys
+import json
 import shutil
 from pathlib import Path
 from xml.etree.ElementTree import Element, ElementTree
 
-# Configuration - Set your gallery parent directory here
-GALLERY_PARENT_DIR = Path("D:\\Manga\\同人")
-ERROR_LOG_FILE = "\error_log.txt"
-ERROR_GALLERIES_FOLDER = "ERROR_GALLERIES"
+# Load configuration from config.json
+CONFIG_FILE = Path(__file__).parent.parent / "config.json"
+with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+    config = json.load(f)
+
+GALLERY_PARENT_DIR = Path(config["gallery_parent_dir"])
+ERROR_LOG_FILE = config["error_log_file"]
+ERROR_GALLERIES_FOLDER = config["error_galleries_folder"]
 
 # Gallery link pattern: https://exhentai.org/g/{numbers}/{alphanumeric}/
 GALLERY_LINK_PATTERN = r'https://exhentai\.org/g/\d+/[a-f0-9]+/'
