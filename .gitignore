@@ -125,13 +125,29 @@ dmypy.json
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # OS
 .DS_Store
 Thumbs.db
 
 # Project specific
-error_log.txt
+error_log*.txt
+debug_*.html
 *.tmp
 /Sample
-/E-hentai/cookie
+/E-Hentai/cookie/
+/config.json
+
+# Generated/runtime files
+Scripts/
+*.exe
+cookie_nhentai.txt
+
+# DLsite generated docs and configs
+DLsite/*.md
+DLsite/*.txt
+DLsite/config_game_renamer.json
+DLsite/test_setup.py
+DLsite/run.bat
+DLsite/requirements.txt
