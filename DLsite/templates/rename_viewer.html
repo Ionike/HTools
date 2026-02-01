@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Renamer Results</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 15px;
+            font-size: 0.95em;
+        }
+
+        .stat-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-state h2 {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+            color: #999;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        thead {
+            background: #f8f9fa;
+            position: sticky;
+            top: 0;
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #dee2e6;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #e9ecef;
+            vertical-align: middle;
+        }
+
+        tr:hover {
+            background-color: #f8f9ff;
+        }
+
+        .original-name {
+            color: #dc3545;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .new-name {
+            color: #28a745;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .dlsite-link {
+            display: inline-block;
+            padding: 6px 12px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 0.85em;
+            transition: all 0.3s;
+        }
+
+        .dlsite-link:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .reverse-btn {
+            padding: 8px 16px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .reverse-btn:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+        }
+
+        .reverse-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .open-folder-btn {
+            padding: 8px 16px;
+            background: #17a2b8;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-weight: 500;
+            transition: all 0.3s;
+            margin-bottom: 5px;
+        }
+
+        .open-folder-btn:hover {
+            background: #138496;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(23, 162, 184, 0.4);
+        }
+
+        .open-folder-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .success-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #28a745;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            animation: slideIn 0.3s ease-out;
+            z-index: 1000;
+        }
+
+        .error-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #dc3545;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            animation: slideIn 0.3s ease-out;
+            z-index: 1000;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .game-info {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+
+        .rj-code {
+            display: inline-block;
+            background: #e9ecef;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            margin-right: 8px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab:hover {
+            color: #333;
+            background: #f8f9fa;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .error-item {
+            background: #fff5f5;
+            border-left: 4px solid #dc3545;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+
+        .error-item .folder-name {
+            font-weight: 600;
+            color: #dc3545;
+            font-family: 'Courier New', monospace;
+        }
+
+        .error-item .reason {
+            color: #666;
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+
+        .moved-item {
+            background: #fff8e1;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+
+        .moved-item .folder-name {
+            font-weight: 600;
+            color: #f57c00;
+            font-family: 'Courier New', monospace;
+        }
+
+        .auto-refresh {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .auto-refresh.active {
+            color: #28a745;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .refreshing {
+            animation: pulse 1s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎮 Game Renamer Results</h1>
+            <div class="stats">
+                <div class="stat-item">
+                    ✅ Renamed: <strong id="stat-renamed">{{ total }}</strong>
+                </div>
+                <div class="stat-item">
+                    ❌ Errors: <strong id="stat-errors">0</strong>
+                </div>
+                <div class="stat-item">
+                    📦 Moved: <strong id="stat-moved">0</strong>
+                </div>
+                <div class="stat-item">
+                    ⏭️ Skipped: <strong id="stat-skipped">0</strong>
+                </div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('renamed')">✅ Renamed Games</button>
+                <button class="tab" onclick="switchTab('errors')">❌ Errors</button>
+                <button class="tab" onclick="switchTab('moved')">📦 Moved (Non-DLsite)</button>
+                <button class="tab" onclick="switchTab('skipped')">⏭️ Skipped</button>
+            </div>
+
+            <!-- Renamed Games Tab -->
+            <div id="tab-renamed" class="tab-content active">
+                <div id="renamed-list">
+                    {% if renamed|length == 0 %}
+                        <div class="empty-state">
+                            <h2>No renamed games yet</h2>
+                            <p>Waiting for game_renamer_v2.py to process folders...</p>
+                        </div>
+                    {% else %}
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th style="width: 30%">Original Name</th>
+                                    <th style="width: 30%">Renamed To</th>
+                                    <th style="width: 15%">DLsite Link</th>
+                                    <th style="width: 25%">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="renamed-tbody">
+                                {% for item in renamed %}
+                                <tr data-original="{{ item.original }}" data-newname="{{ item.new_name }}">
+                                    <td>
+                                        <div class="original-name">{{ item.original }}</div>
+                                    </td>
+                                    <td>
+                                        <div class="new-name">{{ item.new_name }}</div>
+                                        <div class="game-info">
+                                            {% if item.rj_number %}
+                                                <span class="rj-code">{{ item.rj_number }}</span>
+                                            {% endif %}
+                                            {% if item.author %}
+                                                {{ item.author }}
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {% if item.dlsite_link %}
+                                            <a href="{{ item.dlsite_link }}" target="_blank" class="dlsite-link">
+                                                🔗 View on DLsite
+                                            </a>
+                                        {% else %}
+                                            <span style="color: #999;">N/A</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <button class="open-folder-btn" data-folder="{{ item.new_name }}">
+                                                📂 Open Folder
+                                            </button>
+                                            <button class="reverse-btn" data-original="{{ item.original }}" data-newname="{{ item.new_name }}">
+                                                ↩️ Reverse
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Errors Tab -->
+            <div id="tab-errors" class="tab-content">
+                <div id="errors-list"></div>
+            </div>
+
+            <!-- Moved Tab -->
+            <div id="tab-moved" class="tab-content">
+                <div id="moved-list"></div>
+            </div>
+
+            <!-- Skipped Tab -->
+            <div id="tab-skipped" class="tab-content">
+                <div id="skipped-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="auto-refresh" id="refresh-indicator">
+        🔄 Auto-refreshing...
+    </div>
+
+    <script>
+        let currentTab = 'renamed';
+
+        function switchTab(tabName) {
+            currentTab = tabName;
+
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+        }
+
+        function showMessage(message, isError = false) {
+            const div = document.createElement('div');
+            div.className = isError ? 'error-message' : 'success-message';
+            div.textContent = message;
+            document.body.appendChild(div);
+
+            setTimeout(() => {
+                div.style.animation = 'slideIn 0.3s ease-out reverse';
+                setTimeout(() => div.remove(), 300);
+            }, 3000);
+        }
+
+        async function refreshData() {
+            const indicator = document.getElementById('refresh-indicator');
+            indicator.classList.add('refreshing');
+
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+
+                // Update stats
+                document.getElementById('stat-renamed').textContent = data.stats.renamed;
+                document.getElementById('stat-errors').textContent = data.stats.errors;
+                document.getElementById('stat-moved').textContent = data.stats.moved_non_dlsite;
+                document.getElementById('stat-skipped').textContent = data.stats.skipped;
+
+                // Update renamed list
+                updateRenamedList(data.renamed);
+
+                // Update errors list
+                updateErrorsList(data.errors);
+
+                // Update moved list
+                updateMovedList(data.moved_non_dlsite);
+
+                // Update skipped list
+                updateSkippedList(data.skipped);
+
+            } catch (error) {
+                console.error('Failed to refresh data:', error);
+            }
+
+            indicator.classList.remove('refreshing');
+        }
+
+        function updateRenamedList(renamed) {
+            const tbody = document.getElementById('renamed-tbody');
+            if (!tbody) return;
+
+            // Clear existing rows
+            tbody.innerHTML = '';
+
+            // Add new rows
+            renamed.forEach(item => {
+                const row = document.createElement('tr');
+                row.setAttribute('data-original', item.original);
+                row.setAttribute('data-newname', item.new_name);
+
+                row.innerHTML = `
+                    <td>
+                        <div class="original-name">${escapeHtml(item.original)}</div>
+                    </td>
+                    <td>
+                        <div class="new-name">${escapeHtml(item.new_name)}</div>
+                        <div class="game-info">
+                            ${item.rj_number ? `<span class="rj-code">${escapeHtml(item.rj_number)}</span>` : ''}
+                            ${item.author ? escapeHtml(item.author) : ''}
+                        </div>
+                    </td>
+                    <td>
+                        ${item.dlsite_link ?
+                          `<a href="${item.dlsite_link}" target="_blank" class="dlsite-link">🔗 View on DLsite</a>` :
+                          '<span style="color: #999;">N/A</span>'}
+                    </td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="open-folder-btn" data-folder="${escapeHtml(item.new_name)}">
+                                📂 Open Folder
+                            </button>
+                            <button class="reverse-btn" data-original="${escapeHtml(item.original)}" data-newname="${escapeHtml(item.new_name)}">
+                                ↩️ Reverse
+                            </button>
+                        </div>
+                    </td>
+                `;
+
+                tbody.appendChild(row);
+            });
+        }
+
+        function updateErrorsList(errors) {
+            const container = document.getElementById('errors-list');
+            if (!container) return;
+
+            if (errors.length === 0) {
+                container.innerHTML = '<div class="empty-state"><h2>No errors</h2></div>';
+                return;
+            }
+
+            container.innerHTML = '';
+            errors.forEach(error => {
+                const div = document.createElement('div');
+                div.className = 'error-item';
+                div.innerHTML = `
+                    <div class="folder-name">${escapeHtml(error.folder || 'Unknown')}</div>
+                    <div class="reason">Error: ${escapeHtml(error.error || 'Unknown error')}</div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function updateMovedList(moved) {
+            const container = document.getElementById('moved-list');
+            if (!container) return;
+
+            if (moved.length === 0) {
+                container.innerHTML = '<div class="empty-state"><h2>No moved folders</h2></div>';
+                return;
+            }
+
+            container.innerHTML = '';
+            moved.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'moved-item';
+                div.innerHTML = `
+                    <div class="folder-name">${escapeHtml(item.folder || 'Unknown')}</div>
+                    <div class="reason">Reason: ${escapeHtml(item.reason || 'Not a DLsite game')}</div>
+                    ${item.confidence ? `<div class="reason">Confidence: ${escapeHtml(item.confidence)}</div>` : ''}
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function updateSkippedList(skipped) {
+            const container = document.getElementById('skipped-list');
+            if (!container) return;
+
+            if (skipped.length === 0) {
+                container.innerHTML = '<div class="empty-state"><h2>No skipped folders</h2></div>';
+                return;
+            }
+
+            container.innerHTML = '';
+            skipped.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'moved-item';
+                div.innerHTML = `
+                    <div class="folder-name">${escapeHtml(item.folder || 'Unknown')}</div>
+                    <div class="reason">Reason: ${escapeHtml(item.reason || 'Unknown')}</div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function escapeJs(text) {
+            // Escape for JavaScript string context
+            return text.replace(/\\/g, '\\\\')
+                       .replace(/'/g, "\\'")
+                       .replace(/"/g, '\\"')
+                       .replace(/\n/g, '\\n')
+                       .replace(/\r/g, '\\r');
+        }
+
+        async function openFolder(folderName, button) {
+            // Prevent multiple rapid clicks
+            if (button.disabled) return;
+
+            button.disabled = true;
+            const originalText = button.textContent;
+            button.textContent = 'Opening...';
+
+            try {
+                const response = await fetch('/open_folder', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        folder_name: folderName
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage(`✓ Opened folder: ${folderName}`);
+                } else {
+                    showMessage(`✗ Error: ${result.error}`, true);
+                }
+            } catch (error) {
+                showMessage(`✗ Network error: ${error.message}`, true);
+            } finally {
+                // Re-enable after a delay to prevent rapid clicks
+                setTimeout(() => {
+                    button.disabled = false;
+                    button.textContent = originalText;
+                }, 1000);
+            }
+        }
+
+        async function reverseRename(originalName, newName, button) {
+            // Prevent multiple rapid clicks
+            if (button.disabled) return;
+
+            if (!confirm(`Reverse rename?\n\n"${newName}"\n\n→ back to →\n\n"${originalName}"`)) {
+                return;
+            }
+
+            button.disabled = true;
+            button.textContent = 'Reversing...';
+
+            try {
+                const response = await fetch('/reverse', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        original: originalName,
+                        new_name: newName
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage(`✓ Reversed: ${newName} → ${originalName}`);
+                    // Refresh data after short delay
+                    setTimeout(() => refreshData(), 1000);
+                } else {
+                    showMessage(`✗ Error: ${result.error}`, true);
+                    button.disabled = false;
+                    button.textContent = '↩️ Reverse';
+                }
+            } catch (error) {
+                showMessage(`✗ Network error: ${error.message}`, true);
+                button.disabled = false;
+                button.textContent = '↩️ Reverse';
+            }
+        }
+
+        // Event delegation for buttons (prevents duplicate handlers on refresh)
+        document.addEventListener('click', function(e) {
+            // Handle open folder button clicks
+            if (e.target.classList.contains('open-folder-btn') ||
+                e.target.closest('.open-folder-btn')) {
+                const button = e.target.classList.contains('open-folder-btn') ?
+                              e.target : e.target.closest('.open-folder-btn');
+                const folderName = button.getAttribute('data-folder');
+                if (folderName) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openFolder(folderName, button);
+                }
+            }
+
+            // Handle reverse button clicks
+            if (e.target.classList.contains('reverse-btn') ||
+                e.target.closest('.reverse-btn')) {
+                const button = e.target.classList.contains('reverse-btn') ?
+                              e.target : e.target.closest('.reverse-btn');
+                const originalName = button.getAttribute('data-original');
+                const newName = button.getAttribute('data-newname');
+                if (originalName && newName) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    reverseRename(originalName, newName, button);
+                }
+            }
+        });
+
+        // Prevent multiple intervals if script runs multiple times
+        if (!window.refreshIntervalId) {
+            window.refreshIntervalId = setInterval(refreshData, 2000);
+        }
+
+        // Initial refresh on load
+        window.addEventListener('load', () => {
+            setTimeout(refreshData, 500);
+        });
+    </script>
+</body>
+</html>
