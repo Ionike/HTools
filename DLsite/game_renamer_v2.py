@@ -33,6 +33,12 @@ if sys.platform == 'win32':
 logger = logging.getLogger(__name__)
 
 try:
+    import pefile
+    PEFILE_AVAILABLE = True
+except ImportError:
+    PEFILE_AVAILABLE = False
+
+try:
     import requests
     from urllib.parse import quote
     from selenium import webdriver
@@ -68,7 +74,7 @@ class VerificationSource(Enum):
     """Sources used for game verification"""
     REGEX_FOLDER_NAME = "regex_folder_name"
     LLM_FILE_ANALYSIS = "llm_file_analysis"
-    GOOGLE_SEARCH = "google_search"
+    DUCKDUCKGO_SEARCH = "duckduckgo_search"
 
 
 @dataclass
@@ -99,7 +105,7 @@ class LMStudioClient:
             logger.error(f"Cannot connect to LMStudio: {e}")
             return False
 
-    def query(self, prompt: str, temperature: float = 0.3, max_tokens: int = 300) -> Optional[str]:
+    def query(self, prompt: str, temperature: float = 0.3, max_tokens: int = 2048) -> Optional[str]:
         """Query the LLM with a prompt"""
         try:
             payload = {
@@ -109,7 +115,11 @@ class LMStudioClient:
                 "max_tokens": max_tokens
             }
 
-            response = requests.post(self.api_url, json=payload, timeout=120)
+            logger.debug(f"LLM request: max_tokens={max_tokens}, temperature={temperature}")
+            start_time = time.time()
+            response = requests.post(self.api_url, json=payload, timeout=300)
+            elapsed = time.time() - start_time
+            logger.info(f"LLM response received in {elapsed:.1f}s")
             response.raise_for_status()
 
             result = response.json()
@@ -156,7 +166,9 @@ class FolderAnalyzer:
                     if file_lower.endswith(('.txt', '.md', '.readme')):
                         contents['text_files'].append(rel_path)
 
-                    if any(x in file_lower for x in ['readme', 'お読み', '説明', 'manual', 'info']):
+                    if any(x in file_lower for x in ['readme', 'お読み', '説明', 'manual', '読んで']):
+                        contents['readme_files'].append(rel_path)
+                    elif file_lower.endswith('.txt') and 'info' in file_lower:
                         contents['readme_files'].append(rel_path)
 
                     if 'rj' in file_lower or 'dlsite' in file_lower:
@@ -206,7 +218,7 @@ OUTPUT JSON ONLY:
         logger.info("="*60)
         logger.info(f"Prompt sent to LLM:\n{prompt}")
 
-        response = self.llm.query(prompt, temperature=0.3, max_tokens=800)
+        response = self.llm.query(prompt, temperature=0.3, max_tokens=2048)
 
         logger.info(f"\nLLM RAW RESPONSE:\n{response}")
         logger.info("="*60)
@@ -223,8 +235,19 @@ OUTPUT JSON ONLY:
                 logger.warning(f"Failed to parse LLM response: {response}")
 
         # Fallback: return readme and text files ONLY (no executables)
+        # Filter out binary resource files (.pak.info, .dat, etc.)
+        binary_extensions = ('.pak.info', '.pak', '.dat', '.rgss', '.rvdata', '.rvdata2', '.rpgmvp', '.ogg_', '.png_', '.m4a_')
+        filtered_readme = [f for f in contents['readme_files'] if not f.lower().endswith(binary_extensions)]
+        filtered_text = [f for f in contents['text_files'] if not f.lower().endswith(binary_extensions)]
+
+        # Prioritize: readme files first, then text files, then rj_related
+        useful_files = filtered_readme + contents['rj_related'] + filtered_text
+        # Remove duplicates while preserving order
+        seen = set()
+        useful_files = [f for f in useful_files if not (f in seen or seen.add(f))]
+
         fallback = {
-            "useful_files": (contents['readme_files'] + contents['rj_related'] + contents['text_files'])[:5],
+            "useful_files": useful_files[:5],
             "reason": "Fallback selection"
         }
         logger.info(f"Using fallback: {fallback}")
@@ -267,10 +290,13 @@ class GameIdentifier:
         self.llm = llm
 
     def identify_game(self, folder_name: str, useful_files: List[str],
-                     file_contents: Dict[str, str]) -> Optional[Dict]:
+                     file_contents: Dict[str, str], exe_title: Optional[str] = None) -> Optional[Dict]:
         """Stage 2: LLM identifies game from folder name and file contents
 
         Also pre-extracts Japanese titles from standard 『』 brackets in readme files
+
+        Args:
+            exe_title: Extracted title from exe version info (ProductName/FileDescription)
         """
 
         # PRE-PROCESSING: Extract Japanese title from readme files
@@ -291,9 +317,9 @@ class GameIdentifier:
         ]
 
         for filename, content in file_contents.items():
-            if any(keyword in filename.lower() for keyword in ['readme', 'read me', '__readme']):
-                # Look for Japanese title in 『』 brackets - find ALL matches and filter
-                matches = re.findall(r'『([^』]+)』', content)
+            if any(keyword in filename.lower() for keyword in ['readme', 'read me', '__readme', '読んで', 'よんで']):
+                # Look for Japanese title in 『』 or 「」 brackets - find ALL matches and filter
+                matches = re.findall(r'[『「]([^』」]+)[』」]', content)
                 for title_text in matches:
                     title_text = title_text.strip()
 
@@ -319,7 +345,14 @@ class GameIdentifier:
                     break
 
         # Build context - ONLY include text files, NOT binary executables
-        context = f"Folder name: {folder_name}\n\n"
+        context = f"Folder name: {folder_name}\n"
+
+        # Add exe title if extracted - THIS IS THE MOST RELIABLE SOURCE
+        if exe_title:
+            context += f"EXE TITLE (from executable version info): {exe_title}\n"
+            logger.info(f"Including exe title in context: '{exe_title}'")
+
+        context += "\n"
 
         for file, content in file_contents.items():
             # Skip binary files (exe, dll, etc.) - they just confuse the LLM
@@ -331,31 +364,33 @@ class GameIdentifier:
                     continue
                 context += f"=== {file} ===\n{content[:600]}\n\n"
 
-        prompt = f"""Extract game info from this DLsite game folder. Output JSON only.
+        # ========== STEP 1: Try to extract game info ==========
+        prompt_extract = f"""Extract game info from this DLsite game folder. Output JSON only.
 
 {context}
 
 RULES:
-1. The folder name often contains or at least contains parts of the ACTUAL game title
-2. game_name = core title only (no dates, versions, language tags)
-3. rj_number = RJ followed by 6-8 digits, or null
-4. author = circle/サークル name, or null
-5. Look for ◆サークル or circle name in readme
-6. MOST IMPORTANT: The exe runnable's title. That usually contains the game title
+1. MOST IMPORTANT: If "EXE TITLE" is provided above, that IS the game title - use it directly!
+2. The folder name often contains parts of the game title
+3. game_name = core title only (no dates, versions, language tags)
+4. rj_number = RJ followed by 6-8 digits, or null
+5. author = circle/サークル name, or null
+6. Look for ◆サークル or circle name in readme
 
 OUTPUT FORMAT (JSON only, no explanation):
 {{"is_dlsite_game": true, "game_name": "title", "rj_number": "RJ123456", "author": "circle"}}"""
 
         logger.info("="*60)
-        logger.info("STAGE 2: LLM IDENTIFYING GAME INFO")
+        logger.info("STAGE 2A: LLM EXTRACTING GAME INFO")
         logger.info("="*60)
-        logger.info(f"Prompt sent to LLM:\n{prompt}")
+        logger.info(f"Prompt sent to LLM:\n{prompt_extract}")
 
-        response = self.llm.query(prompt, temperature=0.3, max_tokens=1000)
+        response = self.llm.query(prompt_extract, temperature=0.3, max_tokens=2048)
 
         logger.info(f"\nLLM RAW RESPONSE:\n{response}")
         logger.info("="*60)
 
+        result = None
         if response:
             try:
                 # Extract JSON from response (may be after <think> tags)
@@ -389,20 +424,95 @@ OUTPUT FORMAT (JSON only, no explanation):
                             logger.info(f"LLM failed to extract game name, using pre-extracted: '{japanese_title_from_readme}'")
                             result['game_name'] = japanese_title_from_readme
 
-                    return result
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse LLM response")
 
-        # Fallback: if LLM completely failed, DON'T use pre-extracted title blindly
-        # (it may be wrong like "ツクール" or "素材提供者様")
-        # Instead, return minimal info and let search verification use folder name
-        logger.warning("LLM failed to extract game info - will rely on folder name for search")
-        return {
-            'is_dlsite_game': True,  # Assume it is, let search verify
-            'game_name': None,  # Don't guess - let search use folder name
-            'rj_number': None,
-            'author': None
-        }
+        # If LLM failed but we have pre-extracted title, use it
+        if result is None and japanese_title_from_readme:
+            logger.info(f"LLM failed to respond, using pre-extracted Japanese title: '{japanese_title_from_readme}'")
+            result = {
+                'is_dlsite_game': True,
+                'game_name': japanese_title_from_readme,
+                'rj_number': None,
+                'author': None
+            }
+
+        # ========== STEP 2: If extraction failed or unclear, ask for search terms ==========
+        # Check if we got useful extraction
+        extraction_failed = (
+            result is None or
+            not result.get('game_name') or
+            result.get('game_name', '').lower() in ['title', 'game name here', 'unknown', ''] or
+            (not result.get('rj_number') and not result.get('author'))  # No RJ and no author = uncertain
+        )
+
+        if extraction_failed:
+            logger.info("="*60)
+            logger.info("STAGE 2B: LLM DETERMINING SEARCH TERMS (extraction unclear)")
+            logger.info("="*60)
+
+            # Fresh prompt specifically for search terms
+            prompt_search = f"""I need to search DLsite for this game. What should I search for?
+
+Folder name: {folder_name}
+
+{context}
+
+Based on the folder name and file contents, suggest search terms to find this game on DLsite.
+Prefer Japanese titles/keywords. Extract any recognizable game title, character names, or keywords.
+Be aware of game engine files like RPG MAKER are not game names.
+
+OUTPUT FORMAT (JSON only):
+{{"search_terms": ["primary search term", "alternative term"]}}"""
+
+            logger.info(f"Prompt sent to LLM:\n{prompt_search}")
+
+            search_response = self.llm.query(prompt_search, temperature=0.3, max_tokens=1024)
+
+            logger.info(f"\nLLM SEARCH TERMS RESPONSE:\n{search_response}")
+            logger.info("="*60)
+
+            search_terms = []
+            if search_response:
+                try:
+                    # Try to find JSON with search_terms - improved regex to handle arrays
+                    search_json_match = re.search(r'\{\s*"search_terms"\s*:\s*\[([^\]]*)\]\s*\}', search_response, re.DOTALL)
+                    if search_json_match:
+                        search_result = json.loads(search_json_match.group())
+                        search_terms = search_result.get('search_terms', [])
+                        logger.info(f"LLM suggested search terms: {search_terms}")
+                    else:
+                        # Fallback: try to extract Japanese text that looks like game titles from the response
+                        # Look for quoted Japanese strings that could be game titles
+                        japanese_terms = re.findall(r'[「『【]([^」』】]+)[」』】]', search_response)
+                        # Also look for: エマ, **エマ**, "エマ" patterns
+                        quoted_terms = re.findall(r'["\*]{1,2}([ぁ-んァ-ヶー一-龯]+[ぁ-んァ-ヶー一-龯\s・～〜\-の]*)["\*]{1,2}', search_response)
+                        potential_terms = japanese_terms + quoted_terms
+                        # Filter to reasonable game title lengths (3-30 chars)
+                        search_terms = [t.strip() for t in potential_terms if 3 <= len(t.strip()) <= 30][:3]
+                        if search_terms:
+                            logger.info(f"Extracted search terms from verbose LLM response: {search_terms}")
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse search terms response")
+
+            # Build fallback result with search terms
+            cleaned_folder_name = re.sub(r'\s*[\[\(]?(ver|v|version)[\s\d\.]+.*$', '', folder_name, flags=re.IGNORECASE)
+            cleaned_folder_name = re.sub(r'[\[\(].*?[\]\)]', '', cleaned_folder_name)
+            cleaned_folder_name = re.sub(r'_+', ' ', cleaned_folder_name).strip()
+
+            if result is None:
+                result = {
+                    'is_dlsite_game': True,
+                    'game_name': cleaned_folder_name if cleaned_folder_name else folder_name,
+                    'rj_number': None,
+                    'author': None
+                }
+
+            # Add search terms to result
+            result['search_terms'] = search_terms if search_terms else [cleaned_folder_name]
+            logger.info(f"Final result with search terms: {result}")
+
+        return result
 
 
 class DLsiteSearcher:
@@ -723,65 +833,28 @@ class DLsiteSearcher:
             logger.warning(f"2Captcha solve failed: {e}")
             return False
 
-    def _search_google_for_dlsite(self, search_query: str) -> Optional[str]:
+    def _search_duckduckgo_for_dlsite(self, search_query: str) -> Optional[str]:
         """
-        Use Google to search for DLsite games via Selenium with user's Chrome profile.
-        Using the existing profile avoids reCAPTCHA since it has cookies/history.
+        Use DuckDuckGo HTML search to find DLsite games.
+        No Selenium needed - uses simple HTTP requests with no CAPTCHA issues.
         """
-        logger.info(f"Google search: '{search_query}'")
+        logger.info(f"DuckDuckGo search: '{search_query}'")
 
-        driver = None
-        chrome_pid = None
         try:
-            # Use non-headless mode with user profile to avoid detection
-            driver, chrome_pid = self._init_selenium_driver(headless=False)
-            if not driver:
-                logger.warning("Selenium driver initialization failed")
+            ddg_url = f"https://html.duckduckgo.com/html/?q={quote(search_query + ' site:dlsite.com')}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8'
+            }
+
+            logger.info(f"DuckDuckGo URL: {ddg_url}")
+            response = self.session.get(ddg_url, headers=headers, timeout=20)
+
+            if response.status_code != 200:
+                logger.warning(f"DuckDuckGo returned status {response.status_code}")
                 return None
 
-            # Google search URL
-            google_url = f"https://www.google.com/search?q={quote(search_query + ' site:dlsite.com')}"
-            logger.info(f"Selenium navigating to: {google_url}")
-
-            driver.get(google_url)
-
-            # Wait for page load with random delay to appear human
-            import random
-            time.sleep(random.uniform(2.0, 4.0))
-
-            html = driver.page_source
-
-            # Check for CAPTCHA
-            if 'captcha' in html.lower() or 'unusual traffic' in html.lower():
-                logger.warning("Google reCAPTCHA detected")
-
-                # Try automated solving first
-                captcha_solved = False
-                if RECAPTCHA_SOLVER_AVAILABLE:
-                    captcha_solved = self._solve_recaptcha(driver)
-
-                # Try 2Captcha API service as second attempt
-                if not captcha_solved and TWOCAPTCHA_AVAILABLE:
-                    captcha_solved = self._solve_recaptcha_2captcha(driver)
-
-                # Fall back to manual solve with shorter timeout
-                if not captcha_solved:
-                    logger.warning("Waiting for manual CAPTCHA solve (up to 30 seconds)...")
-                    for i in range(30):
-                        time.sleep(1)
-                        html = driver.page_source
-                        if 'captcha' not in html.lower() and 'unusual traffic' not in html.lower():
-                            logger.info("CAPTCHA solved manually, continuing...")
-                            captcha_solved = True
-                            break
-                    else:
-                        logger.warning("CAPTCHA not solved in time")
-                        return None
-
-                # Re-read page after CAPTCHA solved
-                if captcha_solved:
-                    time.sleep(1)
-                    html = driver.page_source
+            html = response.text
 
             # Look for RJ codes in the HTML
             patterns = [
@@ -796,19 +869,15 @@ class DLsiteSearcher:
                     rj_number = matches[0] if isinstance(matches[0], str) else matches[0]
                     if not rj_number.startswith('RJ'):
                         rj_number = 'RJ' + rj_number
-                    logger.info(f"✓ Google found RJ code: {rj_number}")
+                    logger.info(f"✓ DuckDuckGo found RJ code: {rj_number}")
                     return rj_number.upper()
 
-            logger.info("Google found no RJ codes")
+            logger.info("DuckDuckGo found no RJ codes")
             return None
 
         except Exception as e:
-            logger.error(f"Google search failed: {e}")
+            logger.error(f"DuckDuckGo search failed: {e}")
             return None
-
-        finally:
-            # Use robust cleanup to prevent orphaned processes
-            self._cleanup_driver(driver, chrome_pid)
 
     def _title_similarity(self, folder_name: str, found_title: str) -> float:
         """Calculate similarity between folder name and found title (0.0 to 1.0)"""
@@ -853,11 +922,14 @@ class DLsiteSearcher:
 
         return intersection / union
 
-    def verify_is_dlsite_game(self, folder_name: str, game_name: Optional[str] = None) -> Dict:
+    def verify_is_dlsite_game(self, folder_name: str, game_name: Optional[str] = None, llm_search_terms: Optional[List[str]] = None) -> Dict:
         """
         Multi-tier search to verify if this is a DLsite game:
         1. DLsite direct search with multiple variations (aggressive)
-        2. Google search via Selenium with user's Chrome profile (fallback)
+        2. DuckDuckGo search (fallback, no CAPTCHA issues)
+
+        Always uses folder_name as fallback if game_name is not provided.
+        llm_search_terms: Optional list of search keywords suggested by LLM.
         """
         import random
 
@@ -865,7 +937,10 @@ class DLsiteSearcher:
         logger.info("MULTI-TIER SEARCH VERIFICATION")
         logger.info("="*60)
 
+        # ALWAYS use folder_name as base, enhance with game_name if available
         search_query = game_name if game_name else folder_name
+        logger.info(f"Search query source: {'game_name' if game_name else 'folder_name'}")
+        logger.info(f"Original search query: '{search_query}'")
 
         # Remove version numbers and common suffixes for better search
         cleaned_query = re.sub(r'\s*[\[\(]?(ver|v|version)[\s\d\.]+.*$', '', search_query, flags=re.IGNORECASE)
@@ -923,6 +998,11 @@ class DLsiteSearcher:
             cleaned_query.lower(),  # Lowercase
             search_query,  # Original query
         ])
+
+        # Add LLM-suggested search terms if available
+        if llm_search_terms:
+            logger.info(f"Adding {len(llm_search_terms)} LLM-suggested search terms")
+            search_variations.extend(llm_search_terms)
 
         # Remove duplicates while preserving order
         seen = set()
@@ -995,18 +1075,28 @@ class DLsiteSearcher:
 
         logger.info("DLsite direct search exhausted")
 
-        # TIER 2: Google search via Selenium with user's Chrome profile
-        logger.info(f"Tier 2: Google search for '{cleaned_query}'")
-        rj_from_google = self._search_google_for_dlsite(cleaned_query)
+        # TIER 2: DuckDuckGo search (no Selenium needed, no CAPTCHA issues)
+        # Try LLM-suggested search terms first, then fall back to cleaned_query
+        ddg_search_terms = []
+        if llm_search_terms:
+            ddg_search_terms.extend(llm_search_terms)
+        ddg_search_terms.append(cleaned_query)
+        # Remove duplicates while preserving order
+        seen_ddg = set()
+        ddg_search_terms = [x for x in ddg_search_terms if x and not (x in seen_ddg or seen_ddg.add(x))]
 
-        if rj_from_google:
-            logger.info(f"✓ Google found game: {rj_from_google}")
-            return {
-                'is_dlsite': True,
-                'rj_number': rj_from_google,
-                'confidence': 'high',
-                'source': 'google_search'
-            }
+        for ddg_term in ddg_search_terms:
+            logger.info(f"Tier 2: DuckDuckGo search for '{ddg_term}'")
+            rj_from_ddg = self._search_duckduckgo_for_dlsite(ddg_term)
+
+            if rj_from_ddg:
+                logger.info(f"✓ DuckDuckGo found game: {rj_from_ddg}")
+                return {
+                    'is_dlsite': True,
+                    'rj_number': rj_from_ddg,
+                    'confidence': 'high',
+                    'source': 'duckduckgo_search'
+                }
 
         # No results found
         logger.info(f"All search methods failed for '{search_query}'")
@@ -1312,36 +1402,268 @@ class GameRenamer:
 
         return False
 
+    def _clean_game_title(self, title: str) -> Optional[str]:
+        """Clean up game title by removing control instructions and other cruft"""
+        if not title:
+            return None
+
+        # Common patterns that indicate control instructions following the title
+        # Split on these patterns and take the first part
+        split_patterns = [
+            r'　　',           # Double-width space (common separator)
+            r'  ',             # Double space
+            r'\s*enter[：:]',   # enter: control instruction
+            r'\s*esc[：:]',     # esc: control instruction
+            r'\s*↑↓←→',        # Arrow key instructions
+            r'\s*【',           # 【 bracket often starts instructions
+            r'\s*\[操作\]',    # [操作] = [Controls]
+            r'\s*操作方法',    # 操作方法 = Control method
+            r'\s*決定[：:]',   # 決定: = Confirm:
+        ]
+
+        cleaned = title
+        for pattern in split_patterns:
+            match = re.search(pattern, cleaned, re.IGNORECASE)
+            if match:
+                cleaned = cleaned[:match.start()].strip()
+                if cleaned:
+                    break
+
+        # If we have something, return it; otherwise return original but trimmed
+        if cleaned and len(cleaned) >= 2:
+            return cleaned
+        elif len(title) <= 100:  # If short enough, just return as-is
+            return title.strip()
+        else:
+            return title[:100].strip()  # Truncate very long titles
+
+    def _extract_game_title_from_config(self, folder_path: str) -> Optional[str]:
+        """Extract game title from engine config files (RPG Maker, NW.js, etc.) without launching"""
+        title = None
+
+        # 1. RPG Maker MV/MZ: www/data/System.json
+        for system_path in [
+            os.path.join(folder_path, 'www', 'data', 'System.json'),
+            os.path.join(folder_path, 'data', 'System.json'),
+        ]:
+            if os.path.exists(system_path):
+                try:
+                    with open(system_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if 'gameTitle' in data and data['gameTitle']:
+                            title = data['gameTitle'].strip()
+                            logger.info(f"Found raw game title in System.json: '{title}'")
+                            cleaned = self._clean_game_title(title)
+                            logger.info(f"Cleaned game title: '{cleaned}'")
+                            return cleaned
+                except Exception as e:
+                    logger.debug(f"Failed to read System.json: {e}")
+
+        # Also check subdirectories (game might be in a subfolder)
+        for root, dirs, files in os.walk(folder_path):
+            if root.count(os.sep) - folder_path.count(os.sep) > 3:
+                break  # Don't go too deep
+            for fname in files:
+                if fname.lower() == 'system.json':
+                    fpath = os.path.join(root, fname)
+                    try:
+                        with open(fpath, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if 'gameTitle' in data and data['gameTitle']:
+                                title = data['gameTitle'].strip()
+                                logger.info(f"Found game title in {fpath}: '{title}'")
+                                return title
+                    except:
+                        pass
+
+        # 2. RPG Maker VX/VXAce/XP: Game.ini or RPG_RT.ini
+        for ini_name in ['Game.ini', 'RPG_RT.ini']:
+            for root, dirs, files in os.walk(folder_path):
+                if root.count(os.sep) - folder_path.count(os.sep) > 3:
+                    break
+                if ini_name in files:
+                    ini_path = os.path.join(root, ini_name)
+                    try:
+                        # Try multiple encodings
+                        for enc in ['utf-8', 'shift-jis', 'cp932']:
+                            try:
+                                with open(ini_path, 'r', encoding=enc) as f:
+                                    content = f.read()
+                                    # Look for Title= or GameTitle=
+                                    match = re.search(r'^(?:Title|GameTitle)\s*=\s*(.+)$', content, re.MULTILINE)
+                                    if match:
+                                        title = match.group(1).strip()
+                                        if title and title.lower() not in ['game', 'untitled']:
+                                            logger.info(f"Found game title in {ini_name}: '{title}'")
+                                            return self._clean_game_title(title)
+                                break
+                            except UnicodeDecodeError:
+                                continue
+                    except Exception as e:
+                        logger.debug(f"Failed to read {ini_name}: {e}")
+
+        # 3. NW.js/Electron games: package.json
+        for root, dirs, files in os.walk(folder_path):
+            if root.count(os.sep) - folder_path.count(os.sep) > 3:
+                break
+            if 'package.json' in files:
+                pkg_path = os.path.join(root, 'package.json')
+                try:
+                    with open(pkg_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        # Check window.title first (NW.js specific)
+                        if 'window' in data and isinstance(data['window'], dict):
+                            if 'title' in data['window'] and data['window']['title']:
+                                title = data['window']['title'].strip()
+                                if title.lower() not in ['game', 'nw.js']:
+                                    logger.info(f"Found game title in package.json window.title: '{title}'")
+                                    return self._clean_game_title(title)
+                        # Then check name field
+                        if 'name' in data and data['name']:
+                            name = data['name'].strip()
+                            # Skip generic package names
+                            if name.lower() not in ['game', 'nw', 'app', 'electron']:
+                                # package.json name might be in slug format, clean it up
+                                if re.search(r'[ぁ-んァ-ヶー一-龯]', name):
+                                    logger.info(f"Found game title in package.json name: '{name}'")
+                                    return self._clean_game_title(name)
+                except Exception as e:
+                    logger.debug(f"Failed to read package.json: {e}")
+
+        return None
+
+    def _extract_exe_version_info(self, exe_path: str) -> Dict[str, str]:
+        """Extract Windows PE version info (ProductName, FileDescription, etc.)"""
+        version_info = {}
+
+        if not PEFILE_AVAILABLE:
+            logger.debug("pefile not available, skipping PE version info extraction")
+            return version_info
+
+        try:
+            pe = pefile.PE(exe_path, fast_load=True)
+            pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+
+            if hasattr(pe, 'FileInfo'):
+                for file_info in pe.FileInfo:
+                    if hasattr(file_info, '__iter__'):
+                        for info in file_info:
+                            if hasattr(info, 'StringTable'):
+                                for st in info.StringTable:
+                                    for key, value in st.entries.items():
+                                        try:
+                                            key_str = key.decode('utf-8', errors='ignore') if isinstance(key, bytes) else str(key)
+                                            val_str = value.decode('utf-8', errors='ignore') if isinstance(value, bytes) else str(value)
+                                            if val_str.strip():
+                                                version_info[key_str] = val_str.strip()
+                                        except:
+                                            pass
+            pe.close()
+
+            if version_info:
+                logger.info(f"Extracted PE version info: {version_info}")
+
+        except Exception as e:
+            logger.debug(f"Failed to extract PE version info: {e}")
+
+        return version_info
+
     def _extract_exe_strings(self, exe_path: str, min_len: int = 4) -> List[str]:
-        """Extract ASCII strings from executable file (window titles, app names, etc.)"""
+        """Extract strings from executable file including UTF-16 for Japanese titles"""
+        useful_strings = []
+
         try:
             with open(exe_path, "rb") as f:
                 data = f.read()
 
-            # Extract ASCII printable strings
-            pattern = rb"[ -~]{%d,}" % min_len
-            strings = [s.decode("ascii", errors="ignore") for s in re.findall(pattern, data)]
+            # 1. Extract ASCII printable strings
+            ascii_pattern = rb"[ -~]{%d,}" % min_len
+            ascii_strings = [s.decode("ascii", errors="ignore") for s in re.findall(ascii_pattern, data)]
 
-            # Filter for potentially useful strings (window titles, app names)
-            useful_strings = []
+            # 2. Extract UTF-16 LE strings (Windows native encoding for Japanese)
+            # This captures Japanese text stored in resource sections
+            utf16_strings = []
+            try:
+                # Better pattern: look for UTF-16 LE with null bytes (ASCII chars become XX 00)
+                # or Japanese hiragana/katakana/kanji ranges
+                # Hiragana: 0x3040-0x309F -> in UTF-16 LE: 40 30 to 9F 30
+                # Katakana: 0x30A0-0x30FF -> in UTF-16 LE: A0 30 to FF 30
+                # CJK: 0x4E00-0x9FFF -> in UTF-16 LE: 00 4E to FF 9F
+
+                # Find sequences that look like valid UTF-16 LE text
+                # Pattern: at least 3 chars of either ASCII (XX 00) or Japanese
+                utf16_pattern = rb'(?:[\x20-\x7e]\x00|[\x00-\xff][\x30-\x9f]){3,50}'
+                utf16_matches = re.findall(utf16_pattern, data)
+
+                for match in utf16_matches:
+                    try:
+                        # Ensure even length for UTF-16
+                        if len(match) % 2 != 0:
+                            match = match[:-1]
+                        decoded = match.decode('utf-16-le', errors='ignore').strip()
+                        # Keep strings with Japanese characters
+                        if decoded and re.search(r'[ぁ-んァ-ヶー一-龯]', decoded):
+                            # Clean up control chars
+                            decoded = re.sub(r'[\x00-\x1f]', '', decoded).strip()
+                            if len(decoded) >= 3 and len(decoded) <= 100:
+                                # Skip if mostly garbage characters
+                                if not re.search(r'[^\w\sぁ-んァ-ヶー一-龯・～〜\-]', decoded[:20]):
+                                    utf16_strings.append(decoded)
+                    except:
+                        pass
+            except Exception as e:
+                logger.debug(f"UTF-16 extraction error: {e}")
+
+            # 3. Extract Shift-JIS strings (common in older Japanese games)
+            shiftjis_strings = []
+            try:
+                # Look for Shift-JIS sequences
+                sjis_matches = re.findall(rb'[\x81-\x9f\xe0-\xef][\x40-\x7e\x80-\xfc]{2,50}', data)
+                for match in sjis_matches:
+                    try:
+                        decoded = match.decode('shift-jis', errors='ignore').strip()
+                        if decoded and re.search(r'[ぁ-んァ-ヶー一-龯]', decoded):
+                            if len(decoded) >= 2 and len(decoded) <= 100:
+                                shiftjis_strings.append(decoded)
+                    except:
+                        pass
+            except Exception as e:
+                logger.debug(f"Shift-JIS extraction error: {e}")
+
+            # Combine and deduplicate
+            all_strings = []
+            seen = set()
+
+            # Prioritize Japanese strings
+            for s in utf16_strings + shiftjis_strings:
+                s = s.strip()
+                if s and s not in seen and len(s) >= 3:
+                    seen.add(s)
+                    all_strings.append(s)
+
+            # Add relevant ASCII strings
             keywords = ['title', 'window', 'app', 'game', 'name', 'caption',
                        'product', 'description', 'copyright', 'company']
+            for s in ascii_strings:
+                s = s.strip()
+                if s and s not in seen:
+                    s_lower = s.lower()
+                    if any(kw in s_lower for kw in keywords):
+                        seen.add(s)
+                        all_strings.append(s)
+                    elif len(s) > 10 and len(s) < 100:
+                        seen.add(s)
+                        all_strings.append(s)
 
-            for s in strings:
-                s_lower = s.lower()
-                # Look for strings that might contain game info
-                if any(kw in s_lower for kw in keywords):
-                    useful_strings.append(s)
-                # Also include strings with Japanese characters nearby (might be game title)
-                elif len(s) > 10 and len(s) < 100:  # Reasonable length for a title
-                    useful_strings.append(s)
+            useful_strings = all_strings[:50]
 
-            # Limit to avoid too much data
-            return useful_strings[:50]
+            if useful_strings:
+                logger.info(f"Extracted {len(useful_strings)} strings from exe (including {len(utf16_strings)} UTF-16, {len(shiftjis_strings)} Shift-JIS)")
 
         except Exception as e:
             logger.error(f"Failed to extract strings from exe: {e}")
-            return []
+
+        return useful_strings
 
     def _analyze_exe_strings_with_llm(self, exe_strings: List[str], folder_name: str) -> Optional[str]:
         """Ask LLM to analyze exe strings and suggest better search terms"""
@@ -1378,7 +1700,7 @@ Ignore: paths, errors, "Game", "RPG Maker", "tkool".
 OUTPUT ONLY THE GAME TITLE (one line, no explanation).
 If not found, output: NONE"""
 
-        response = self.llm.query(prompt, temperature=0.1, max_tokens=100)
+        response = self.llm.query(prompt, temperature=0.1, max_tokens=512)
 
         if response:
             # Clean up response
@@ -1487,12 +1809,23 @@ If not found, output: NONE"""
         if should_search_verify:
             logger.info("Verification Stage 3: Multi-tier search verification")
 
-            # Use enhanced search term if available, otherwise game name from LLM, otherwise folder name
+            # Use enhanced search term if available, otherwise game name from LLM
+            # Also try LLM-suggested search_terms if available
             search_term = enhanced_search_term or (game_info.get('game_name') if game_info else None)
-            search_result = self.searcher.verify_is_dlsite_game(folder_name, search_term)
+            llm_search_terms = game_info.get('search_terms', []) if game_info else []
+
+            if not search_term:
+                logger.info(f"No game name from LLM - will search using folder name: '{folder_name}'")
+            else:
+                logger.info(f"Searching with term: '{search_term}'")
+
+            if llm_search_terms:
+                logger.info(f"LLM also suggested search terms: {llm_search_terms}")
+
+            search_result = self.searcher.verify_is_dlsite_game(folder_name, search_term, llm_search_terms)
 
             if search_result.get('is_dlsite'):
-                verification_sources.append(VerificationSource.GOOGLE_SEARCH)  # Keep enum name for compatibility
+                verification_sources.append(VerificationSource.DUCKDUCKGO_SEARCH)
                 is_dlsite = True
 
                 # Extract RJ from search if available
@@ -1652,12 +1985,54 @@ If not found, output: NONE"""
             if content:
                 file_contents[file] = content
 
+        # Step 3.5: Extract exe title from config files or version info (CRITICAL for Japanese titles)
+        exe_title = None
+
+        # First try config files (most reliable for RPG Maker games)
+        logger.info("Step 3.5a: Trying to extract game title from config files...")
+        exe_title = self._extract_game_title_from_config(folder_path)
+
+        # If no title from config, try PE version info
+        if not exe_title and contents.get('executables'):
+            exe_path = os.path.join(folder_path, contents['executables'][0])
+            logger.info(f"Step 3.5b: Extracting exe version info from: {exe_path}")
+
+            # Try PE version info
+            version_info = self._extract_exe_version_info(exe_path)
+            if version_info:
+                # Priority: ProductName > FileDescription > InternalName
+                for key in ['ProductName', 'FileDescription', 'InternalName']:
+                    if key in version_info:
+                        candidate = version_info[key].strip()
+                        # Skip generic names
+                        if candidate.lower() not in ['game', 'game.exe', 'rpg_rt', 'rpgvxace', 'application', 'game_exe', 'nwjs', 'nw']:
+                            exe_title = candidate
+                            logger.info(f"Found exe title from PE version info ({key}): '{exe_title}'")
+                            break
+
+            # If no title from version info, try string extraction
+            if not exe_title:
+                exe_strings = self._extract_exe_strings(exe_path)
+                if exe_strings:
+                    # Look for Japanese strings first (most likely to be game title)
+                    for s in exe_strings[:10]:
+                        if re.search(r'[ぁ-んァ-ヶー一-龯]', s) and len(s) >= 3:
+                            exe_title = s
+                            logger.info(f"Found exe title from string extraction: '{exe_title}'")
+                            break
+
+        if exe_title:
+            logger.info(f"==> Final exe_title to send to LLM: '{exe_title}'")
+        else:
+            logger.info("==> No exe_title found from config files, PE info, or string extraction")
+
         # Step 4: Identify game (LLM Stage 2)
         logger.info("Step 4: LLM identifying game information...")
         game_info = self.game_identifier.identify_game(
             folder_name,
             useful_info.get('useful_files', []),
-            file_contents
+            file_contents,
+            exe_title=exe_title
         )
 
         # === NEW: MULTI-STAGE VERIFICATION ===
@@ -1854,7 +2229,7 @@ Think about it, then answer "yes" or "no"."""
         logger.info("="*60)
         logger.info(f"Prompt sent to LLM:\n{prompt}")
 
-        response = self.llm.query(prompt, temperature=0.1, max_tokens=500)
+        response = self.llm.query(prompt, temperature=0.1, max_tokens=1024)
 
         logger.info(f"\nLLM RAW RESPONSE:\n{response}")
         logger.info("="*60)
