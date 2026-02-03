@@ -1,5 +1,5 @@
 """
-Extract ComicInfo.xml from ExHentai gallery URL
+Manually extract ComicInfo.xml from ExHentai gallery URL
 Loops through gallery folders in a parent directory and prompts for URLs
 """
 
