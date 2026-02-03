@@ -138,11 +138,13 @@ debug_*.html
 /Sample
 /E-Hentai/cookie/
 /config.json
+E-Hentai/config.json
 
 # Generated/runtime files
 Scripts/
 *.exe
 cookie_nhentai.txt
+
 
 # DLsite generated docs and configs
 DLsite/*.md
