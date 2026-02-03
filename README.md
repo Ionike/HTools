@@ -5,7 +5,7 @@ Scripts for my Doujin manga and game collection.
 
 /DLsite:
 
-./game_renamer_v2.py: Select a parent folder path, rename games in each folder in parent folder. It uses Local LLM to extract game folder contents, including folder name, exe title, .txt contents then decide the search term and search on DLsite and DDG. Then it will fetch the search result and rename the folder with[YYMMDD][RJ NUMBER][AUTHOR]GAME NAME. It features a web portal for you to review the result. The accuracy is ~50%. I suggest start with this and perceed with each version of renamer, in each run you correct them manually bu reverse the previous name in the web portal.  
+./game_renamer_v2.py: Select a parent folder path, rename games in each folder in parent folder. It uses Local LLM to extract game folder contents, including folder name, exe title, .txt contents then decide the search term and search on DLsite and DDG. Then it will fetch the search result and rename the folder with[YYMMDD][RJ NUMBER][AUTHOR]GAME NAME. It features a web portal for you to review the result. The accuracy is ~70%. I suggest start with this and perceed with each version of renamer, in each run you correct them manually bu reverse the previous name in the web portal.  
 
 ./game_renamer_DDG remove the dlsite search part, only DDG.  
 
