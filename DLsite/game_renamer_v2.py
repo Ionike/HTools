@@ -1211,8 +1211,9 @@ class DLsiteScraper:
 class GameRenamer:
     """Main orchestrator for the renaming process"""
 
-    def __init__(self, parent_folder: str):
+    def __init__(self, parent_folder: str, viewer_port: int = 5000):
         self.parent_folder = parent_folder
+        self.viewer_port = viewer_port
 
         # Initialize components
         self.llm = LMStudioClient()
@@ -1251,7 +1252,7 @@ class GameRenamer:
                 CREATE_NEW_PROCESS_GROUP = 0x00000200
                 DETACHED_PROCESS = 0x00000008
                 subprocess.Popen(
-                    [sys.executable, viewer_path, self.parent_folder, '--port', '5000'],
+                    [sys.executable, viewer_path, self.parent_folder, '--port', str(self.viewer_port)],
                     creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -1260,18 +1261,18 @@ class GameRenamer:
             else:
                 # Unix: use start_new_session to detach
                 subprocess.Popen(
-                    [sys.executable, viewer_path, self.parent_folder, '--port', '5000'],
+                    [sys.executable, viewer_path, self.parent_folder, '--port', str(self.viewer_port)],
                     start_new_session=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL
                 )
 
-            logger.info("Started rename viewer at http://127.0.0.1:5000 (independent process)")
+            logger.info(f"Started rename viewer at http://127.0.0.1:{self.viewer_port} (independent process)")
 
             # Open browser after short delay
             time.sleep(1)
-            webbrowser.open('http://127.0.0.1:5000')
+            webbrowser.open(f'http://127.0.0.1:{self.viewer_port}')
 
         except Exception as e:
             logger.warning(f"Could not start viewer: {e}")
@@ -2378,6 +2379,7 @@ def main():
 Examples:
   python game_renamer_v2.py
   python game_renamer_v2.py "E:\\同人\\RPG"
+  python game_renamer_v2.py "E:\\同人\\RPG" --viewer-port 5001
         '''
     )
     parser.add_argument(
@@ -2385,6 +2387,12 @@ Examples:
         type=str,
         nargs='?',  # Make it optional
         help='Path to the parent folder containing game folders to rename'
+    )
+    parser.add_argument(
+        '--viewer-port',
+        type=int,
+        default=5000,
+        help='Port to run the viewer on (default: 5000)'
     )
 
     args = parser.parse_args()
@@ -2422,11 +2430,11 @@ Examples:
     logger.info(f"Processing directory: {parent_folder}")
 
     try:
-        renamer = GameRenamer(parent_folder)
+        renamer = GameRenamer(parent_folder, viewer_port=args.viewer_port)
         renamer.run()
 
         # Keep running to maintain the viewer
-        logger.info("\nViewer is still running at http://127.0.0.1:5000")
+        logger.info(f"\nViewer is still running at http://127.0.0.1:{args.viewer_port}")
         logger.info("You can review the results and reverse any renames")
         logger.info("Press Ctrl+C to exit")
 

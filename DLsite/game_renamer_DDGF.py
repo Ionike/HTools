@@ -34,53 +34,97 @@ except ImportError as e:
     logger.error(f"Required packages not installed. Install with: pip install requests")
     sys.exit(1)
 
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.firefox.options import Options as FirefoxOptions
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+    logger.warning("Selenium not available. Install with: pip install selenium")
+
 
 class DDGSearcher:
-    """Searches for game on DLsite via DuckDuckGo"""
+    """Searches for game on DLsite via DuckDuckGo using a headed browser to avoid rate limits"""
 
     def __init__(self):
-        self.session = requests.Session()
-        self._setup_proxy()
+        self.driver = None
+        if not SELENIUM_AVAILABLE:
+            logger.error("Selenium is required for browser-based DDG search. Install with: pip install selenium")
+            sys.exit(1)
+        logger.info("Initializing browser for DuckDuckGo searches...")
+        self._init_browser()
 
-    def _setup_proxy(self):
-        """Set up Windows system proxy"""
+    def _init_browser(self):
+        """Initialize a headed browser (tries Chrome first, then Firefox)"""
+        # Try Chrome first
+        logger.info("Attempting to initialize Chrome browser...")
         try:
-            import winreg
-            reg_path = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings'
-            reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path)
-            proxy_server, _ = winreg.QueryValueEx(reg_key, 'ProxyServer')
+            options = ChromeOptions()
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument('--lang=ja')
+            options.add_argument('--no-first-run')
+            options.add_argument('--no-default-browser-check')
+            options.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
+            options.add_experimental_option('useAutomationExtension', False)
+            self.driver = webdriver.Chrome(options=options)
+            self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': 'Object.defineProperty(navigator, "webdriver", {get: () => undefined})'
+            })
+            logger.info("Browser initialized: Chrome (headed)")
+            return
+        except Exception as e:
+            logger.warning(f"Chrome init failed: {e}")
 
-            if proxy_server:
-                proxies = {
-                    'http': f'http://{proxy_server}',
-                    'https': f'http://{proxy_server}'
-                }
-                self.session.proxies.update(proxies)
-                logger.info(f"Using proxy: {proxy_server}")
-        except:
-            pass
+        # Fallback to Firefox
+        logger.info("Attempting to initialize Firefox browser...")
+        try:
+            options = FirefoxOptions()
+            options.set_preference('intl.accept_languages', 'ja,en-US,en')
+            self.driver = webdriver.Firefox(options=options)
+            logger.info("Browser initialized: Firefox (headed)")
+            return
+        except Exception as e:
+            logger.warning(f"Firefox init failed: {e}")
+
+        logger.error("Could not initialize any browser. Install Chrome or Firefox WebDriver.")
+        sys.exit(1)
+
+    def close(self):
+        """Close the browser"""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+            self.driver = None
 
     def search_duckduckgo(self, search_query: str) -> Optional[str]:
         """
-        Use DuckDuckGo HTML search to find DLsite games.
+        Use DuckDuckGo search via headed browser to find DLsite games.
         Returns RJ number if found.
         """
         logger.info(f"DuckDuckGo search: '{search_query}'")
 
         try:
-            ddg_url = f"https://html.duckduckgo.com/html/?q={quote(search_query + ' site:dlsite.com')}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8'
-            }
+            ddg_url = f"https://duckduckgo.com/?q={quote(search_query + ' site:dlsite.com')}"
+            logger.debug(f"DuckDuckGo URL: {ddg_url}")
 
-            response = self.session.get(ddg_url, headers=headers, timeout=20)
+            self.driver.get(ddg_url)
 
-            if response.status_code != 200:
-                logger.warning(f"DuckDuckGo returned status {response.status_code}")
-                return None
+            # Wait for results to load
+            try:
+                WebDriverWait(self.driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, '[data-result], .result, .results, #links'))
+                )
+            except Exception:
+                # Even if wait times out, try to parse whatever we have
+                time.sleep(3)
 
-            html = response.text
+            html = self.driver.page_source
 
             # Look for RJ codes in the HTML
             patterns = [
@@ -103,6 +147,13 @@ class DDGSearcher:
 
         except Exception as e:
             logger.error(f"DuckDuckGo search failed: {e}")
+            # Try to reinitialize browser if it crashed
+            try:
+                self.driver.title
+            except Exception:
+                logger.info("Browser seems dead, reinitializing...")
+                self.close()
+                self._init_browser()
             return None
 
     def search_with_variations(self, search_terms: List[str]) -> Optional[str]:
@@ -112,9 +163,25 @@ class DDGSearcher:
         """
         import random
 
-        # Remove duplicates while preserving order
+        # Known garbage strings from PE header misinterpretation
+        garbage_patterns = [
+            '桔獩瀠潲牧浡挠湡潮',  # "This program canno" as UTF-16
+            '桔獩瀠潲牧慲',        # Partial variant
+            '獩瀠潲牧浡',          # Partial variant
+        ]
+
+        # Remove duplicates while preserving order, and filter garbage
         seen = set()
-        unique_terms = [x for x in search_terms if x and not (x in seen or seen.add(x)) and len(x) >= 2]
+        unique_terms = []
+        for x in search_terms:
+            if not x or x in seen or len(x) < 2:
+                continue
+            # Skip if contains known garbage
+            if any(garbage in x for garbage in garbage_patterns):
+                logger.debug(f"Filtered garbage string: {x}")
+                continue
+            seen.add(x)
+            unique_terms.append(x)
 
         for i, term in enumerate(unique_terms, 1):
             logger.info(f"Search attempt {i}/{len(unique_terms)}: '{term}'")
@@ -125,7 +192,7 @@ class DDGSearcher:
 
             # Small delay between searches
             if i < len(unique_terms):
-                time.sleep(random.uniform(0.5, 1.5))
+                time.sleep(random.uniform(1.5, 3.0))
 
         return None
 
@@ -425,21 +492,26 @@ class GameRenamer:
         folders = self._get_folders()
         logger.info(f"Found {len(folders)} folders to process")
 
-        for i, folder_path in enumerate(folders, 1):
-            folder_name = os.path.basename(folder_path)
-            logger.info(f"\n{'='*60}")
-            logger.info(f"[{i}/{len(folders)}] Processing: {folder_name}")
-            logger.info(f"{'='*60}")
+        try:
+            for i, folder_path in enumerate(folders, 1):
+                folder_name = os.path.basename(folder_path)
+                logger.info(f"\n{'='*60}")
+                logger.info(f"[{i}/{len(folders)}] Processing: {folder_name}")
+                logger.info(f"{'='*60}")
 
-            try:
-                self._process_folder(folder_path)
-            except Exception as e:
-                logger.error(f"Error processing {folder_name}: {e}")
-                self.results['errors'].append({
-                    'folder': folder_name,
-                    'error': str(e)
-                })
-                self._save_results()
+                try:
+                    self._process_folder(folder_path)
+                except Exception as e:
+                    logger.error(f"Error processing {folder_name}: {e}")
+                    self.results['errors'].append({
+                        'folder': folder_name,
+                        'error': str(e)
+                    })
+                    self._save_results()
+        finally:
+            # Clean up browser
+            logger.info("Closing browser...")
+            self.searcher.close()
 
         self._print_summary()
         self._write_renamed_log()
