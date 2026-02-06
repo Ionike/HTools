@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FANZA/SteamDB Game Renamer Results</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #e91e63 0%, #9c27b0 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #e91e63 0%, #9c27b0 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 15px;
+            font-size: 0.95em;
+        }
+
+        .stat-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        thead {
+            background: #f8f9fa;
+            position: sticky;
+            top: 0;
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #dee2e6;
+            font-size: 0.9em;
+            text-transform: uppercase;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #e9ecef;
+            vertical-align: middle;
+        }
+
+        tr:hover {
+            background-color: #fff5f8;
+        }
+
+        .original-name {
+            color: #dc3545;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .new-name {
+            color: #28a745;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .platform-link {
+            display: inline-block;
+            padding: 6px 12px;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 0.85em;
+            transition: all 0.3s;
+        }
+
+        .platform-link.fanza {
+            background: #e91e63;
+        }
+
+        .platform-link.fanza:hover {
+            background: #c2185b;
+        }
+
+        .platform-link.steam {
+            background: #1b2838;
+        }
+
+        .platform-link.steam:hover {
+            background: #2a475e;
+        }
+
+        .reverse-btn {
+            padding: 8px 16px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.3s;
+        }
+
+        .reverse-btn:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+        }
+
+        .open-folder-btn {
+            padding: 8px 16px;
+            background: #17a2b8;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.3s;
+            margin-bottom: 5px;
+        }
+
+        .open-folder-btn:hover {
+            background: #138496;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .success-message, .error-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            animation: slideIn 0.3s ease-out;
+            z-index: 1000;
+            color: white;
+        }
+
+        .success-message { background: #28a745; }
+        .error-message { background: #dc3545; }
+
+        @keyframes slideIn {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .game-info {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+
+        .product-code {
+            display: inline-block;
+            background: #e9ecef;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            margin-right: 8px;
+        }
+
+        .platform-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-right: 5px;
+        }
+
+        .platform-badge.fanza { background: #fce4ec; color: #e91e63; }
+        .platform-badge.steam { background: #e3f2fd; color: #1976d2; }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab:hover { color: #333; background: #f8f9fa; }
+        .tab.active { color: #e91e63; border-bottom-color: #e91e63; font-weight: 600; }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .error-item, .moved-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+
+        .error-item {
+            background: #fff5f5;
+            border-left: 4px solid #dc3545;
+        }
+
+        .moved-item {
+            background: #fff8e1;
+            border-left: 4px solid #ffc107;
+        }
+
+        .folder-name {
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+        }
+
+        .reason {
+            color: #666;
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+
+        .auto-refresh {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            font-size: 0.85em;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .refreshing { animation: pulse 1s infinite; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>FANZA/SteamDB Game Renamer</h1>
+            <div class="stats">
+                <div class="stat-item">Renamed: <strong id="stat-renamed">{{ total }}</strong></div>
+                <div class="stat-item">Errors: <strong id="stat-errors">0</strong></div>
+                <div class="stat-item">Moved: <strong id="stat-moved">0</strong></div>
+                <div class="stat-item">Skipped: <strong id="stat-skipped">0</strong></div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('renamed')">Renamed Games</button>
+                <button class="tab" onclick="switchTab('errors')">Errors</button>
+                <button class="tab" onclick="switchTab('moved')">Unidentified</button>
+                <button class="tab" onclick="switchTab('skipped')">Skipped</button>
+            </div>
+
+            <div id="tab-renamed" class="tab-content active">
+                <div id="renamed-list">
+                    {% if renamed|length == 0 %}
+                        <div class="empty-state">
+                            <h2>No renamed games yet</h2>
+                            <p>Waiting for game_renamer.py to process folders...</p>
+                        </div>
+                    {% else %}
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th style="width: 25%">Original Name</th>
+                                    <th style="width: 30%">Renamed To</th>
+                                    <th style="width: 15%">Platform</th>
+                                    <th style="width: 30%">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="renamed-tbody">
+                                {% for item in renamed %}
+                                <tr>
+                                    <td><div class="original-name">{{ item.original }}</div></td>
+                                    <td>
+                                        <div class="new-name">{{ item.new_name }}</div>
+                                        <div class="game-info">
+                                            <span class="platform-badge {{ item.platform }}">{{ item.platform }}</span>
+                                            <span class="product-code">{{ item.product_id }}</span>
+                                            {% if item.author %}{{ item.author }}{% endif %}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {% if item.platform_link %}
+                                            <a href="{{ item.platform_link }}" target="_blank"
+                                               class="platform-link {{ item.platform }}">
+                                                View on {{ item.platform|capitalize }}
+                                            </a>
+                                        {% else %}
+                                            <span style="color: #999;">N/A</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <button class="open-folder-btn" data-folder="{{ item.new_name }}">
+                                                Open Folder
+                                            </button>
+                                            <button class="reverse-btn" data-original="{{ item.original }}"
+                                                    data-newname="{{ item.new_name }}">
+                                                Reverse
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div id="tab-errors" class="tab-content"><div id="errors-list"></div></div>
+            <div id="tab-moved" class="tab-content"><div id="moved-list"></div></div>
+            <div id="tab-skipped" class="tab-content"><div id="skipped-list"></div></div>
+        </div>
+    </div>
+
+    <div class="auto-refresh" id="refresh-indicator">Auto-refreshing...</div>
+
+    <script>
+        let currentTab = 'renamed';
+
+        function switchTab(tabName) {
+            currentTab = tabName;
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            event.target.classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+        }
+
+        function showMessage(message, isError = false) {
+            const div = document.createElement('div');
+            div.className = isError ? 'error-message' : 'success-message';
+            div.textContent = message;
+            document.body.appendChild(div);
+            setTimeout(() => div.remove(), 3000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function refreshData() {
+            document.getElementById('refresh-indicator').classList.add('refreshing');
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+
+                document.getElementById('stat-renamed').textContent = data.stats.renamed;
+                document.getElementById('stat-errors').textContent = data.stats.errors;
+                document.getElementById('stat-moved').textContent = data.stats.moved_unidentified;
+                document.getElementById('stat-skipped').textContent = data.stats.skipped;
+
+                updateRenamedList(data.renamed);
+                updateErrorsList(data.errors);
+                updateMovedList(data.moved_unidentified);
+                updateSkippedList(data.skipped);
+            } catch (error) {
+                console.error('Failed to refresh:', error);
+            }
+            document.getElementById('refresh-indicator').classList.remove('refreshing');
+        }
+
+        function updateRenamedList(renamed) {
+            const tbody = document.getElementById('renamed-tbody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            renamed.forEach(item => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><div class="original-name">${escapeHtml(item.original)}</div></td>
+                    <td>
+                        <div class="new-name">${escapeHtml(item.new_name)}</div>
+                        <div class="game-info">
+                            <span class="platform-badge ${item.platform}">${item.platform}</span>
+                            <span class="product-code">${escapeHtml(item.product_id)}</span>
+                            ${item.author ? escapeHtml(item.author) : ''}
+                        </div>
+                    </td>
+                    <td>
+                        ${item.platform_link ?
+                          `<a href="${item.platform_link}" target="_blank" class="platform-link ${item.platform}">View on ${item.platform}</a>` :
+                          '<span style="color: #999;">N/A</span>'}
+                    </td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="open-folder-btn" data-folder="${escapeHtml(item.new_name)}">Open Folder</button>
+                            <button class="reverse-btn" data-original="${escapeHtml(item.original)}" data-newname="${escapeHtml(item.new_name)}">Reverse</button>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function updateErrorsList(errors) {
+            const container = document.getElementById('errors-list');
+            if (errors.length === 0) {
+                container.innerHTML = '<div class="empty-state"><h2>No errors</h2></div>';
+                return;
+            }
+            container.innerHTML = errors.map(e => `
+                <div class="error-item">
+                    <div class="folder-name">${escapeHtml(e.folder || 'Unknown')}</div>
+                    <div class="reason">Error: ${escapeHtml(e.error || 'Unknown')}</div>
+                </div>
+            `).join('');
+        }
+
+        function updateMovedList(moved) {
+            const container = document.getElementById('moved-list');
+            if (moved.length === 0) {
+                container.innerHTML = '<div class="empty-state"><h2>No unidentified folders</h2></div>';
+                return;
+            }
+            container.innerHTML = moved.map(m => `
+                <div class="moved-item">
+                    <div class="folder-name">${escapeHtml(m.folder || 'Unknown')}</div>
+                    <div class="reason">${escapeHtml(m.reason || 'Could not identify')}</div>
+                </div>
+            `).join('');
+        }
+
+        function updateSkippedList(skipped) {
+            const container = document.getElementById('skipped-list');
+            if (skipped.length === 0) {
+                container.innerHTML = '<div class="empty-state"><h2>No skipped folders</h2></div>';
+                return;
+            }
+            container.innerHTML = skipped.map(s => `
+                <div class="moved-item">
+                    <div class="folder-name">${escapeHtml(s.folder || 'Unknown')}</div>
+                    <div class="reason">${escapeHtml(s.reason || 'Unknown')}</div>
+                </div>
+            `).join('');
+        }
+
+        async function openFolder(folderName, button) {
+            if (button.disabled) return;
+            button.disabled = true;
+            try {
+                const response = await fetch('/open_folder', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({folder_name: folderName})
+                });
+                const result = await response.json();
+                if (result.success) showMessage(`Opened: ${folderName}`);
+                else showMessage(`Error: ${result.error}`, true);
+            } catch (error) {
+                showMessage(`Network error: ${error.message}`, true);
+            }
+            setTimeout(() => button.disabled = false, 1000);
+        }
+
+        async function reverseRename(originalName, newName, button) {
+            if (button.disabled) return;
+            if (!confirm(`Reverse rename?\n\n"${newName}"\n\n-> back to ->\n\n"${originalName}"`)) return;
+
+            button.disabled = true;
+            button.textContent = 'Reversing...';
+            try {
+                const response = await fetch('/reverse', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({original: originalName, new_name: newName})
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showMessage(`Reversed: ${newName}`);
+                    setTimeout(refreshData, 1000);
+                } else {
+                    showMessage(`Error: ${result.error}`, true);
+                    button.disabled = false;
+                    button.textContent = 'Reverse';
+                }
+            } catch (error) {
+                showMessage(`Network error: ${error.message}`, true);
+                button.disabled = false;
+                button.textContent = 'Reverse';
+            }
+        }
+
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('open-folder-btn')) {
+                openFolder(e.target.getAttribute('data-folder'), e.target);
+            }
+            if (e.target.classList.contains('reverse-btn')) {
+                reverseRename(
+                    e.target.getAttribute('data-original'),
+                    e.target.getAttribute('data-newname'),
+                    e.target
+                );
+            }
+        });
+
+        if (!window.refreshIntervalId) {
+            window.refreshIntervalId = setInterval(refreshData, 2000);
+        }
+
+        window.addEventListener('load', () => setTimeout(refreshData, 500));
+    </script>
+</body>
+</html>
